@@ -1,0 +1,93 @@
+stages:
+  - start
+  - build
+  - deploy
+
+default:
+  image: node:24
+
+# -------
+#  JOBS
+# -------
+
+start:
+  stage: start
+  when: manual
+  allow_failure: false
+  image: alpine:3
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - echo "Pipeline triggered :D"
+
+# Staging jobs
+build staging:
+  stage: build
+  only:
+    - staging
+  artifacts:
+    paths:
+      - ./
+    name: "${CI_PROJECT_NAME}-${CI_COMMIT_REF_NAME}-${CI_JOB_ID}"
+  script:
+    - export NODE_OPTIONS="--max-old-space-size=8192"
+    - echo "${STAGING_ENV}" > .env
+    
+deploy staging:
+  stage: deploy
+  only:
+    - staging
+  dependencies:
+    - build staging
+  environment:
+    name: staging
+    url: ${STAGING_URL}
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - apt-get update
+    - apt-get install zip --assume-yes
+    - apt-get install sshpass --assume-yes
+  script:
+    - zip -r api.zip ./
+    - sshpass -p "${STAGING_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no ${USER}@${STAGING_HOST} "if [ ! -d "${STAGING_ROOT_PATH}" ]; then mkdir ${STAGING_ROOT_PATH}; fi"
+    - sshpass -p "${STAGING_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no ${USER}@${STAGING_HOST} "if [ ! -d "${STAGING_PATH}" ]; then mkdir ${STAGING_PATH}; fi"
+    - sshpass -p "${STAGING_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null api.zip ${USER}@${STAGING_HOST}:${STAGING_PATH}
+    - sshpass -p "${STAGING_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no ${USER}@${STAGING_HOST} "unzip -o ${STAGING_PATH}/api.zip -d ${STAGING_PATH}"
+    - sshpass -p "${STAGING_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no ${USER}@${STAGING_HOST} "cd ${STAGING_PATH} && docker-compose up --build -d"
+
+# Prod jobs
+build prod:
+  stage: build
+  only:
+    - tags
+  artifacts:
+    paths:
+      - ./
+    name: "${CI_PROJECT_NAME}-${CI_COMMIT_REF_NAME}-${CI_JOB_ID}"
+  script:
+    - export NODE_OPTIONS="--max-old-space-size=8192"
+    - echo "${PROD_ENV}" > .env
+
+deploy prod:
+  stage: deploy
+  only:
+    - tags
+  dependencies:
+    - build prod
+  environment:
+    name: prod
+    url: ${PROD_URL}
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - apt-get update
+    - apt-get install zip --assume-yes
+    - apt-get install sshpass --assume-yes
+  script:
+    - zip -r api.zip ./
+    - sshpass -p "${PROD_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no ${USER}@${PROD_HOST} "if [ ! -d "${PROD_ROOT_PATH}" ]; then mkdir ${PROD_ROOT_PATH}; fi"
+    - sshpass -p "${PROD_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no ${USER}@${PROD_HOST} "if [ ! -d "${PROD_PATH}" ]; then mkdir ${PROD_PATH}; fi"
+    - sshpass -p "${PROD_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null api.zip ${USER}@${PROD_HOST}:${PROD_PATH}
+    - sshpass -p "${PROD_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no ${USER}@${PROD_HOST} "unzip -o ${PROD_PATH}/api.zip -d ${PROD_PATH}"
+    - sshpass -p "${PROD_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no ${USER}@${PROD_HOST} "cd ${PROD_PATH} && docker-compose up --build -d"
