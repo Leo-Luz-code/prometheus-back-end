@@ -8,7 +8,9 @@ import { Injectable } from '@nestjs/common';
 export class AccessTokenStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(configService: ConfigService) {
     super({
-      secretOrKey: configService.get<string>('ACCESS_TOKEN_SECRET'),
+      secretOrKey:
+        configService.get<string>('ACCESS_TOKEN_SECRET') ||
+        'default_access_token_secret',
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
     });
   }

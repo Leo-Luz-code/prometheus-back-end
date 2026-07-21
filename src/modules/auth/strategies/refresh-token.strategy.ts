@@ -12,7 +12,9 @@ export class RefreshTokenStrategy extends PassportStrategy(
 ) {
   constructor(configService: ConfigService) {
     super({
-      secretOrKey: configService.get<string>('REFRESH_TOKEN_SECRET'),
+      secretOrKey:
+        configService.get<string>('REFRESH_TOKEN_SECRET') ||
+        'default_refresh_token_secret',
       jwtFromRequest: ExtractJwt.fromExtractors([
         (req: Request) => {
           const refreshToken = req?.cookies?.['refresh_token'];
