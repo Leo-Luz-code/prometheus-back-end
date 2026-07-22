@@ -1,30 +1,21 @@
-import { QueryAnalyticsDto } from './dto/query-analytics.dto';
-import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
-import { Public } from 'src/common/decorators';
+import { JwtAtGuard, RolesGuard } from '../../common/guards';
+import { Roles } from '../../common/decorators';
+import { Role } from '@prisma/client';
 
-@Public()
-@ApiTags('Analytics')
+@ApiTags('Analytics & Painel de Gestão')
 @Controller('analytics')
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
-  @Get('sumario')
-  @ApiOperation({ summary: 'Obtém um resumo das métricas de requisições' })
-  async getSummary(@Query() query: QueryAnalyticsDto) {
-    return await this.analyticsService.getSummary(query);
-  }
-
-  @Get('top-endpoints')
-  @ApiOperation({ summary: 'Lista os 10 endpoints mais acessados' })
-  async getTopEndpoints(@Query() query: QueryAnalyticsDto) {
-    return await this.analyticsService.getTopEndpoints(query);
-  }
-
-  @Get('atividade-usuarios')
-  @ApiOperation({ summary: 'Lista os 10 usuários com mais requisições' })
-  async getMostActiveUsers(@Query() query: QueryAnalyticsDto) {
-    return await this.analyticsService.getMostActiveUsers(query);
+  @ApiOperation({ summary: 'Painel executivo com métricas agregadas por secretaria e competências' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAtGuard, RolesGuard)
+  @Roles(Role.GESTOR_SECRETARIA, Role.ADMIN_RH_CETI)
+  @Get('dashboard')
+  async getDashboard() {
+    return this.analyticsService.getExecutiveDashboard();
   }
 }
