@@ -47,7 +47,9 @@ async function bootstrap() {
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Conquista Saberes - AVA Municipal PMVC')
-    .setDescription('API Oficial do Ambiente Virtual de Aprendizagem da Prefeitura Municipal de Vitória da Conquista (CETI / SETP)')
+    .setDescription(
+      'API Oficial do Ambiente Virtual de Aprendizagem da Prefeitura Municipal de Vitória da Conquista (CETI / SETP)',
+    )
     .setVersion(config.get<string>('APP_VERSION') || '1.0.0')
     .addTag('Autenticação SSO')
     .addTag('Catálogo de Cursos & AVA')
@@ -62,7 +64,7 @@ async function bootstrap() {
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup('api', app, document);
 
   const HTTP_PORT = config.get<string>('HTTP_PORT');
   const APP_NAME = config.get<string>('APP_NAME');
