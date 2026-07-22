@@ -81,7 +81,7 @@ export class CertificatesService {
         margin: 40,
       });
 
-      const buffers: Buffer[] = [];
+      const buffers: any[] = [];
       doc.on('data', buffers.push.bind(buffers));
       doc.on('end', () => resolve(Buffer.concat(buffers)));
       doc.on('error', reject);

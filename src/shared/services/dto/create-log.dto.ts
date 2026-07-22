@@ -1,3 +1,6 @@
-import { RequestLog } from '@prisma/client';
-
-export type CreateLogDto = Partial<Omit<RequestLog, 'id' | 'timestamp'>>;
+export type CreateLogDto = {
+  userId?: string;
+  acao: string;
+  detalhes?: string;
+  ipAddress?: string;
+};
