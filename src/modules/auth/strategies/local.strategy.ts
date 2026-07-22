@@ -7,12 +7,13 @@ import { Strategy } from 'passport-local';
 export class LocalStrategy extends PassportStrategy(Strategy, 'local') {
   constructor(private authService: AuthService) {
     super({
-      usernameField: 'login',
+      usernameField: 'identifier',
       passwordField: 'senha',
     });
   }
 
-  async validate(login: string, senha: string) {
-    return await this.authService.validaUsuario(login, senha);
+  async validate(identifier: string, senha: string) {
+    const result = await this.authService.validateAndLogin({ identifier, senha });
+    return result.user;
   }
 }

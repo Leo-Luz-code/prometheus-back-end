@@ -14,7 +14,7 @@ export class RefreshTokenStrategy extends PassportStrategy(
     super({
       secretOrKey:
         configService.get<string>('REFRESH_TOKEN_SECRET') ||
-        'default_refresh_token_secret',
+        'secret_key_pmvc_2026',
       jwtFromRequest: ExtractJwt.fromExtractors([
         (req: Request) => {
           const refreshToken = req?.cookies?.['refresh_token'];
@@ -38,7 +38,8 @@ export class RefreshTokenStrategy extends PassportStrategy(
     return {
       role: payload.role,
       sub: payload.sub,
-      login: payload.login,
+      email: payload.email,
+      secretariaId: payload.secretariaId,
       refreshToken,
     };
   }
