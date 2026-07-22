@@ -1,34 +1,37 @@
 import { IsNotEmpty, IsString, IsEmail } from 'class-validator';
-import { Nivel, Situacao } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CriaUsuarioDto {
-  @IsString({ message: 'O nome do usuário tem que ser uma String' })
-  @IsNotEmpty({ message: 'Faltou informar o nome do usuário' })
+  @IsString()
+  @IsNotEmpty()
+  @ApiProperty()
+  readonly cpf: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @ApiProperty()
+  readonly matricula: string;
+
+  @IsString()
+  @IsNotEmpty()
   @ApiProperty()
   readonly nome: string;
 
-  @IsEmail(undefined, { message: 'Email invalido' })
+  @IsEmail()
   @ApiProperty()
   readonly email: string;
 
-  @IsString({ message: 'O nível tem que ser uma String' })
-  @IsNotEmpty({ message: 'Faltou informar o nível do usuário' })
+  @IsString()
+  @IsNotEmpty()
   @ApiProperty()
-  readonly nivel: Nivel;
+  readonly cargo: string;
 
-  @IsString({ message: 'A situação tem que ser uma String' })
-  @IsNotEmpty({ message: 'Faltou informar a situação do usuário' })
+  @IsString()
+  @IsNotEmpty()
   @ApiProperty()
-  readonly situacao: Situacao;
+  readonly secretariaId: string;
 
-  @IsString({ message: 'O login tem que ser uma String' })
-  @IsNotEmpty({ message: 'Faltou informar o login do usuário' })
-  @ApiProperty()
-  readonly login: string;
-
-  @IsString({ message: 'A senha tem que ser uma String' })
-  @IsNotEmpty({ message: 'Faltou informar a senha do usuário' })
-  @ApiProperty()
-  senha: string;
+  @ApiProperty({ enum: Role })
+  readonly role: Role;
 }
