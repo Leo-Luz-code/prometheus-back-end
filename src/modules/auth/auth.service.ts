@@ -1,144 +1,158 @@
-import { PrismaService } from 'src/plugins/database/services/prisma.service';
-import { JwtPayload, JwtRefreshPayload, Usuario } from '../../common/types';
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
-import { UsuariosService } from '../usuarios/usuarios.service';
-import { ConfigService } from '@nestjs/config';
-import { Situacao } from '@prisma/client';
+import { Injectable, Logger, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
+import { PrismaService } from 'src/plugins/database/services/prisma.service';
+import { AutenticaUsuarioDto } from './dto/autentica-usuario.dto';
+import { JwtPayload } from '../../common/types';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
-    private readonly logger: Logger,
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    private readonly usuarioService: UsuariosService,
   ) {}
 
-  async login(usuario: Usuario) {
-    const { accessToken, refreshToken } = await this._buscaTokens(usuario);
-    await this._atualizaRefreshToken(usuario.id, refreshToken);
+  async validateAndLogin(dto: AutenticaUsuarioDto) {
+    const { identifier, senha } = dto;
+    const cleanId = identifier.replace(/\D/g, '');
 
-    return {
-      refreshToken,
-      accessToken,
-      nivel: usuario.nivel,
-      userId: usuario.id,
-    };
-  }
-
-  async atualizaTokens(login: string, refreshToken: string) {
-    const usuario = await this.usuarioService.buscaPorLogin(login);
-
-    await this._validaRefreshToken(refreshToken, usuario);
-
-    const { accessToken, refreshToken: newRefreshToken } =
-      await this._buscaTokens(usuario);
-
-    await this._atualizaRefreshToken(usuario.id, refreshToken);
-
-    return {
-      accessToken,
-      newRefreshToken,
-    };
-  }
-
-  async logout(login: string, refreshToken: string) {
-    const user = await this.usuarioService.buscaPorLogin(login);
-
-    await this._validaRefreshToken(refreshToken, user);
-
-    await this.prisma.usuario.update({
+    // Buscar usuário por CPF, matricula ou email
+    const user = await this.prisma.user.findFirst({
       where: {
-        login,
+        deletedAt: null,
+        OR: [
+          { cpf: cleanId.length === 11 ? cleanId : identifier },
+          { matricula: identifier },
+          { email: identifier },
+        ],
       },
-      data: {
-        refreshToken: null,
+      include: {
+        secretaria: true,
       },
     });
-  }
 
-  async validaUsuario(login: string, senha: string): Promise<Usuario> {
-    const usuario = await this.usuarioService.buscaPorLogin(login);
-
-    if (!usuario) {
-      this.logger.warn(`Usuário não encontrado: ${login}`);
-      throw new UnauthorizedException('Usuário ou senha inválidos!');
+    if (!user) {
+      this.logger.warn(`Tentativa de login com identificador inválido: ${identifier}`);
+      throw new UnauthorizedException('CPF, Matrícula ou senha incorretos.');
     }
 
-    if (usuario.situacao !== Situacao.ATIVO) {
-      this.logger.warn(`Usuário Inativo ou Bloqueado: ${login}`);
-      throw new UnauthorizedException('Usuário Inativo ou Bloqueado!');
+    const passwordMatches = await bcrypt.compare(senha, user.passwordHash);
+    if (!passwordMatches) {
+      this.logger.warn(`Senha incorreta para o usuário: ${user.cpf}`);
+      throw new UnauthorizedException('CPF, Matrícula ou senha incorretos.');
     }
 
-    const senhasCoincidem = await this.usuarioService.comparaDados(
-      senha,
-      usuario.senha,
-    );
+    // Gerar token JWT
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      secretariaId: user.secretariaId,
+    };
 
-    if (!senhasCoincidem) {
-      this.logger.warn(`Password inválido para o usuário: ${login}`);
-      throw new UnauthorizedException('Senha ou usuário inválido!');
-    }
+    const accessToken = this.jwtService.sign(payload, {
+      secret: this.configService.get<string>('ACCESS_TOKEN_SECRET') || 'secret_key_pmvc_2026',
+      expiresIn: this.configService.get<string>('ACCESS_TOKEN_EXPIRATION') || '24h',
+    });
 
-    return usuario;
-  }
-
-  private async _validaRefreshToken(refreshToken: string, usuario: Usuario) {
-    if (!usuario.refreshToken) {
-      this.logger.warn('Refresh token inexistente!', {});
-      throw new UnauthorizedException(
-        'Token de atualização inválido ou expirado. Por favor, faça login novamente!',
-      );
-    }
-
-    const tokensCoincidem = await this.usuarioService.comparaDados(
-      refreshToken,
-      usuario.refreshToken,
-    );
-
-    if (!tokensCoincidem) {
-      this.logger.warn(`Refresh token inválido para o usuário: ${usuario.id}!`);
-      throw new UnauthorizedException(
-        'Token de atualização inválido ou expirado. Por favor, faça login novamente!',
-      );
-    }
-  }
-
-  private async _atualizaRefreshToken(userId: string, refreshToken: string) {
-    const tokenHasheado = await this.usuarioService.hashDado(refreshToken);
-
-    await this.prisma.usuario.update({
-      where: {
-        id: userId,
-      },
+    // Registrar log de auditoria
+    await this.prisma.auditLog.create({
       data: {
-        refreshToken: tokenHasheado,
+        userId: user.id,
+        acao: 'LOGIN',
+        detalhes: `Login realizado com sucesso via SSO por ${user.cpf}`,
       },
     });
-  }
-
-  private async _buscaTokens(usuario: Usuario) {
-    const accessTokenPayload: JwtPayload = {
-      sub: usuario.id,
-      role: usuario.nivel,
-    };
-
-    const refreshTokenPayload: JwtRefreshPayload = {
-      ...accessTokenPayload,
-      login: usuario.login,
-    };
 
     return {
-      accessToken: this.jwtService.sign(accessTokenPayload, {
-        secret: this.configService.get<string>('ACCESS_TOKEN_SECRET'),
-        expiresIn: this.configService.get<string>('ACCESS_TOKEN_EXPIRATION'),
-      }),
-      refreshToken: this.jwtService.sign(refreshTokenPayload, {
-        secret: this.configService.get<string>('REFRESH_TOKEN_SECRET'),
-        expiresIn: this.configService.get<string>('REFRESH_TOKEN_EXPIRATION'),
-      }),
+      accessToken,
+      user: {
+        id: user.id,
+        cpf: user.cpf,
+        matricula: user.matricula,
+        nome: user.nome,
+        email: user.email,
+        role: user.role,
+        cargo: user.cargo,
+        secretaria: user.secretaria,
+        xpPoints: user.xpPoints,
+        level: user.level,
+        lgpdAccepted: user.lgpdAccepted,
+        lgpdAcceptedAt: user.lgpdAcceptedAt,
+      },
+    };
+  }
+
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      include: {
+        secretaria: true,
+        userBadges: {
+          include: { badge: true },
+        },
+        certificates: {
+          include: { course: true },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    return {
+      id: user.id,
+      cpf: user.cpf,
+      matricula: user.matricula,
+      nome: user.nome,
+      email: user.email,
+      role: user.role,
+      cargo: user.cargo,
+      secretaria: user.secretaria,
+      xpPoints: user.xpPoints,
+      level: user.level,
+      lgpdAccepted: user.lgpdAccepted,
+      lgpdAcceptedAt: user.lgpdAcceptedAt,
+      badges: user.userBadges.map((ub) => ({
+        ...ub.badge,
+        earnedAt: ub.earnedAt,
+      })),
+      certificates: user.certificates.map((c) => ({
+        id: c.id,
+        codigoValidacao: c.codigoValidacao,
+        courseTitle: c.course.titulo,
+        issuedAt: c.issuedAt,
+        status: c.status,
+      })),
+    };
+  }
+
+  async acceptLgpd(userId: string) {
+    const updatedUser = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        lgpdAccepted: true,
+        lgpdAcceptedAt: new Date(),
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        acao: 'ACEITE_LGPD',
+        detalhes: 'Aceite dos termos de privacidade e proteção de dados LGPD da PMVC.',
+      },
+    });
+
+    return {
+      message: 'Termo LGPD aceito com sucesso.',
+      lgpdAccepted: updatedUser.lgpdAccepted,
+      lgpdAcceptedAt: updatedUser.lgpdAcceptedAt,
     };
   }
 }

@@ -3,15 +3,15 @@ import { ApiProperty } from '@nestjs/swagger';
 
 export class AutenticaUsuarioDto {
   @ApiProperty({
-    description: 'Login do usuário',
-    example: 'admin',
+    description: 'CPF, Matrícula ou E-mail do servidor municipal',
+    example: '12345678900',
   })
   @IsString()
   @IsNotEmpty()
-  readonly login: string;
+  readonly identifier: string;
 
   @ApiProperty({
-    description: 'Senha do usuário',
+    description: 'Senha de acesso',
     example: '123456',
   })
   @IsString()

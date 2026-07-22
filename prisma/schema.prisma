@@ -1,63 +1,210 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-generator client {
-  provider = "prisma-client-js"
-  moduleFormat = "cjs"
-  
-}
-
 datasource db {
   provider = "postgresql"
 }
 
-model Usuario {
-  id           String       @id @default(uuid())
-  nome         String
-  email        String       @unique
-  nivel        Nivel
-  situacao     Situacao
-  login        String       @unique
-  senha        String
-  refreshToken String?
-  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SERVIDOR
+  GESTOR_SECRETARIA
+  ADMIN_RH_CETI
+}
+
+enum CertificateStatus {
+  EMITTED
+  REVOKED
+}
+
+model Secretaria {
+  id        String    @id @default(uuid())
+  nome      String    // ex: Secretaria de Saúde, Educação, SETP
+  sigla     String    @unique // ex: SMS, SMED, SETP
+  users     User[]
+  courses   Course[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model User {
+  id             String        @id @default(uuid())
+  cpf            String        @unique
+  matricula      String        @unique
+  nome           String
+  email          String        @unique
+  passwordHash   String
+  role           Role          @default(SERVIDOR)
+  cargo          String        // ex: Técnico Administrativo, Encarregado
+  secretariaId   String
+  secretaria     Secretaria    @relation(fields: [secretariaId], references: [id])
+  xpPoints       Int           @default(0)
+  level          Int           @default(1)
+
+  lgpdAccepted   Boolean       @default(false)
+  lgpdAcceptedAt DateTime?
+
+  enrollments    Enrollment[]
+  userBadges     UserBadge[]
+  certificates   Certificate[]
+  forumPosts     ForumPost[]
+  auditLogs      AuditLog[]
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+}
+
+model Course {
+  id           String        @id @default(uuid())
+  titulo       String
+  descricao    String
+  cargaHoraria Int           // em horas
+  capaUrl      String?
+  categoria    String        @default("Geral")
+  secretariaId String?       // Nulo se for geral para toda prefeitura
+  secretaria   Secretaria?   @relation(fields: [secretariaId], references: [id])
+
+  modules      Module[]
+  enrollments  Enrollment[]
+  certificates Certificate[]
+  forumPosts   ForumPost[]
+
+  isPublished  Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   deletedAt    DateTime?
-  RequestLog   RequestLog[]
-
-  @@map("usuarios") //Nome da tabela
 }
 
-enum Situacao {
-  ATIVO
-  INATIVO
-  BLOQUEADO
+model Module {
+  id        String    @id @default(uuid())
+  titulo    String
+  ordem     Int
+  courseId  String
+  course    Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons   Lesson[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 }
 
-enum Nivel {
-  ADMIN
-  USUARIO
+model Lesson {
+  id          String           @id @default(uuid())
+  titulo      String
+  tipo        String           // VIDEO, TEXTO, PDF, QUIZ
+  conteudoUrl String?
+  texto       String?
+  quizData    String?          // JSON com perguntas e respostas do quiz
+  duracaoMin  Int              @default(10)
+  ordem       Int
+  moduleId    String
+  module      Module           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progresses  LessonProgress[]
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  deletedAt   DateTime?
 }
 
-model RequestLog {
-  id        String   @id @default(uuid())
-  timestamp DateTime @default(now()) @db.Timestamptz(3)
+model Enrollment {
+  id          String    @id @default(uuid())
+  userId      String
+  courseId    String
+  user        User      @relation(fields: [userId], references: [id])
+  course      Course    @relation(fields: [courseId], references: [id])
+  progress    Float     @default(0.0) // 0 a 100%
+  completedAt DateTime?
 
-  userId    String?
-  user      Usuario? @relation(fields: [userId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([userId, courseId])
+}
+
+model LessonProgress {
+  id        String    @id @default(uuid())
+  userId    String
+  lessonId  String
+  lesson    Lesson    @relation(fields: [lessonId], references: [id])
+  completed Boolean   @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([userId, lessonId])
+}
+
+model Badge {
+  id          String      @id @default(uuid())
+  nome        String
+  descricao   String
+  icone       String      // Nome do ícone Quasar ou URL
+  xpBonus     Int         @default(50)
+  userBadges  UserBadge[]
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+}
+
+model UserBadge {
+  id        String    @id @default(uuid())
+  userId    String
+  badgeId   String
+  user      User      @relation(fields: [userId], references: [id])
+  badge     Badge     @relation(fields: [badgeId], references: [id])
+  earnedAt  DateTime  @default(now())
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([userId, badgeId])
+}
+
+model Certificate {
+  id              String            @id @default(uuid())
+  codigoValidacao  String            @unique // Hash único
+  userId          String
+  courseId        String
+  user            User              @relation(fields: [userId], references: [id])
+  course          Course            @relation(fields: [courseId], references: [id])
+  status          CertificateStatus @default(EMITTED)
+  issuedAt        DateTime          @default(now())
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
+}
+
+model ForumPost {
+  id        String    @id @default(uuid())
+  titulo    String
+  conteudo  String
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  courseId  String?
+  course    Course?   @relation(fields: [courseId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model AuditLog {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  acao      String    // ex: LOGIN, CURSO_CONCLUIDO, ACEITE_LGPD
+  detalhes  String?
   ipAddress String?
 
-  method     String
-  path       String
-  statusCode Int
-  latency    Int
-  body       Json?  @db.JsonB
-
-  serviceName String?
-  actionName  String?
-  userAgent   String?
-
-  @@index([userId])
-  @@index([timestamp])
-  @@index([path])
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
 }

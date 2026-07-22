@@ -1,11 +1,12 @@
-import { Nivel } from '@prisma/client';
-
-export type JwtRefreshPayload = JwtPayload & {
-  login: string;
-  refreshToken?: string;
-};
+import { Role } from '@prisma/client';
 
 export type JwtPayload = {
   sub: string;
-  role: Nivel;
+  email: string;
+  role: Role;
+  secretariaId: string;
+};
+
+export type JwtRefreshPayload = JwtPayload & {
+  refreshToken?: string;
 };

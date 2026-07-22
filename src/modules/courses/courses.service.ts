@@ -1,0 +1,304 @@
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { PrismaService } from 'src/plugins/database/services/prisma.service';
+import { CertificateStatus } from '@prisma/client';
+
+@Injectable()
+export class CoursesService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findAll(search?: string, secretariaId?: string, categoria?: string) {
+    const where: any = {
+      isPublished: true,
+      deletedAt: null,
+    };
+
+    if (search) {
+      where.OR = [
+        { titulo: { contains: search, mode: 'insensitive' } },
+        { descricao: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (secretariaId) {
+      where.OR = [
+        { secretariaId },
+        { secretariaId: null }, // Cursos gerais da prefeitura
+      ];
+    }
+
+    if (categoria && categoria !== 'Todas') {
+      where.categoria = categoria;
+    }
+
+    const courses = await this.prisma.course.findMany({
+      where,
+      include: {
+        secretaria: true,
+        _count: {
+          select: { modules: true, enrollments: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return courses.map((course) => ({
+      id: course.id,
+      titulo: course.titulo,
+      descricao: course.descricao,
+      cargaHoraria: course.cargaHoraria,
+      categoria: course.categoria,
+      capaUrl: course.capaUrl,
+      secretaria: course.secretaria,
+      modulosCount: course._count.modules,
+      inscritosCount: course._count.enrollments,
+    }));
+  }
+
+  async findOne(id: string, userId?: string) {
+    const course = await this.prisma.course.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        secretaria: true,
+        modules: {
+          where: { deletedAt: null },
+          orderBy: { ordem: 'asc' },
+          include: {
+            lessons: {
+              where: { deletedAt: null },
+              orderBy: { ordem: 'asc' },
+            },
+          },
+        },
+      },
+    });
+
+    if (!course) {
+      throw new NotFoundException('Curso não encontrado.');
+    }
+
+    let userProgress = 0;
+    let isEnrolled = false;
+    const completedLessonIds: string[] = [];
+
+    if (userId) {
+      const enrollment = await this.prisma.enrollment.findUnique({
+        where: { userId_courseId: { userId, courseId: id } },
+      });
+
+      if (enrollment) {
+        isEnrolled = true;
+        userProgress = enrollment.progress;
+
+        const progresses = await this.prisma.lessonProgress.findMany({
+          where: {
+            userId,
+            lesson: { module: { courseId: id } },
+            completed: true,
+          },
+        });
+        completedLessonIds.push(...progresses.map((p) => p.lessonId));
+      }
+    }
+
+    return {
+      ...course,
+      isEnrolled,
+      userProgress,
+      completedLessonIds,
+    };
+  }
+
+  async enroll(courseId: string, userId: string) {
+    const course = await this.prisma.course.findFirst({
+      where: { id: courseId, deletedAt: null },
+    });
+
+    if (!course) {
+      throw new NotFoundException('Curso não encontrado.');
+    }
+
+    const existing = await this.prisma.enrollment.findUnique({
+      where: { userId_courseId: { userId, courseId } },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    const newEnrollment = await this.prisma.enrollment.create({
+      data: {
+        userId,
+        courseId,
+        progress: 0.0,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        acao: 'INSCRICAO_CURSO',
+        detalhes: `Inscrição no curso: ${course.titulo}`,
+      },
+    });
+
+    return newEnrollment;
+  }
+
+  async completeLesson(lessonId: string, userId: string) {
+    const lesson = await this.prisma.lesson.findFirst({
+      where: { id: lessonId, deletedAt: null },
+      include: { module: { include: { course: true } } },
+    });
+
+    if (!lesson) {
+      throw new NotFoundException('Aula não encontrada.');
+    }
+
+    const courseId = lesson.module.courseId;
+
+    // Garantir inscrição
+    let enrollment = await this.prisma.enrollment.findUnique({
+      where: { userId_courseId: { userId, courseId } },
+    });
+
+    if (!enrollment) {
+      enrollment = await this.prisma.enrollment.create({
+        data: { userId, courseId, progress: 0.0 },
+      });
+    }
+
+    // Registrar progresso da aula se ainda não completada
+    const existingProgress = await this.prisma.lessonProgress.findUnique({
+      where: { userId_lessonId: { userId, lessonId } },
+    });
+
+    let gainedXp = 0;
+    if (!existingProgress || !existingProgress.completed) {
+      await this.prisma.lessonProgress.upsert({
+        where: { userId_lessonId: { userId, lessonId } },
+        update: { completed: true },
+        create: { userId, lessonId, completed: true },
+      });
+
+      gainedXp = lesson.tipo === 'QUIZ' ? 100 : 50;
+    }
+
+    // Calcular progresso total do curso
+    const allLessons = await this.prisma.lesson.findMany({
+      where: { module: { courseId }, deletedAt: null },
+    });
+
+    const completedLessons = await this.prisma.lessonProgress.findMany({
+      where: {
+        userId,
+        lesson: { module: { courseId } },
+        completed: true,
+      },
+    });
+
+    const progressPercentage = Math.min(
+      100,
+      Math.round((completedLessons.length / allLessons.length) * 100),
+    );
+
+    const isNowCompleted = progressPercentage >= 100 && !enrollment.completedAt;
+
+    await this.prisma.enrollment.update({
+      where: { id: enrollment.id },
+      data: {
+        progress: progressPercentage,
+        completedAt: isNowCompleted ? new Date() : enrollment.completedAt,
+      },
+    });
+
+    // Atualizar XP e Nível do Usuário
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    let newXp = (user?.xpPoints || 0) + gainedXp;
+    let newLevel = Math.floor(newXp / 250) + 1;
+
+    // Conclusão de Curso: Bônus de XP, Badges e Certificado Automatizado
+    let newBadgeEarned: any = null;
+    let newCertificateCode: string | null = null;
+
+    if (isNowCompleted) {
+      newXp += 200; // Bônus por concluir curso
+      newLevel = Math.floor(newXp / 250) + 1;
+
+      // Verificar / Conceder Badges
+      const badges = await this.prisma.badge.findMany({ where: { deletedAt: null } });
+      const courseTitleLower = lesson.module.course.titulo.toLowerCase();
+
+      let targetBadge = null;
+      if (courseTitleLower.includes('inovação')) {
+        targetBadge = badges.find((b) => b.nome.includes('Inovador'));
+      } else if (courseTitleLower.includes('lgpd')) {
+        targetBadge = badges.find((b) => b.nome.includes('LGPD'));
+      }
+
+      if (!targetBadge) {
+        targetBadge = badges.find((b) => b.nome.includes('Pioneiro'));
+      }
+
+      if (targetBadge) {
+        const hasBadge = await this.prisma.userBadge.findUnique({
+          where: { userId_badgeId: { userId, badgeId: targetBadge.id } },
+        });
+
+        if (!hasBadge) {
+          await this.prisma.userBadge.create({
+            data: { userId, badgeId: targetBadge.id },
+          });
+          newBadgeEarned = targetBadge;
+          newXp += targetBadge.xpBonus;
+          newLevel = Math.floor(newXp / 250) + 1;
+        }
+      }
+
+      // Gerar Certificado com Hash Único
+      const existingCert = await this.prisma.certificate.findFirst({
+        where: { userId, courseId },
+      });
+
+      if (!existingCert) {
+        const randHash = Math.random().toString(36).substring(2, 8).toUpperCase();
+        newCertificateCode = `CS-PMVC-2026-${randHash}`;
+
+        await this.prisma.certificate.create({
+          data: {
+            codigoValidacao: newCertificateCode,
+            userId,
+            courseId,
+            status: CertificateStatus.EMITTED,
+            issuedAt: new Date(),
+          },
+        });
+
+        await this.prisma.auditLog.create({
+          data: {
+            userId,
+            acao: 'CERTIFICADO_EMITIDO',
+            detalhes: `Certificado ${newCertificateCode} emitido para o curso: ${lesson.module.course.titulo}`,
+          },
+        });
+      } else {
+        newCertificateCode = existingCert.codigoValidacao;
+      }
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { xpPoints: newXp, level: newLevel },
+    });
+
+    return {
+      message: 'Aula concluída com sucesso!',
+      gainedXp,
+      newTotalXp: newXp,
+      level: newLevel,
+      courseProgress: progressPercentage,
+      isCourseCompleted: progressPercentage >= 100,
+      newBadgeEarned,
+      newCertificateCode,
+    };
+  }
+}

@@ -10,15 +10,17 @@ export class AccessTokenStrategy extends PassportStrategy(Strategy, 'jwt') {
     super({
       secretOrKey:
         configService.get<string>('ACCESS_TOKEN_SECRET') ||
-        'default_access_token_secret',
+        'secret_key_pmvc_2026',
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
     });
   }
 
   async validate(payload: JwtPayload) {
     return {
-      role: payload.role,
       sub: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      secretariaId: payload.secretariaId,
     };
   }
 }
