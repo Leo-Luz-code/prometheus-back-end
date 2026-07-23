@@ -55,6 +55,8 @@ model User {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   deletedAt      DateTime?
+  
+  comments     ForumComment[] 
 }
 
 model Course {
@@ -186,14 +188,30 @@ model ForumPost {
   id        String    @id @default(uuid())
   titulo    String
   conteudo  String
-  userId    String
-  user      User      @relation(fields: [userId], references: [id])
-  courseId  String?
-  course    Course?   @relation(fields: [courseId], references: [id])
-
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+
+  courseId  String?
+  course    Course?   @relation(fields: [courseId], references: [id])
+
+  comments  ForumComment[] // 👈 ADICIONE ESTA LINHA AQUI
+}
+
+model ForumComment {
+  id        String    @id @default(uuid())
+  conteudo  String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  postId    String
+  post      ForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model AuditLog {
